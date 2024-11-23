@@ -1,0 +1,141 @@
+import tkinter as tk
+from tkinter import messagebox, ttk
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.firefox.service import Service
+from webdriver_manager.firefox import GeckoDriverManager
+from selenium.webdriver.common.keys import Keys
+import requests, os, threading, time
+from ultralytics import YOLO
+
+model = YOLO("yolov5x.pt")
+stop_search = False
+
+def fetch_and_download_images(query, nsfw_filter, block_nsfw, download_folder):
+    options = webdriver.FirefoxOptions()
+    options.add_argument('--headless')
+    driver = webdriver.Firefox(service=Service(GeckoDriverManager().install()), options=options)
+    if nsfw_filter:
+        query = f"{query} nsfw explicit porn adult"
+    elif block_nsfw:
+        query = f"{query} -nsfw -porn -explicit"
+    else:
+        query = f"{query} -explicit"
+    search_url = f"https://duckduckgo.com/?q={query.replace(' ', '+')}&t=h_&iax=images&ia=images&kp=-2"  # kp=-2 disables Safe Search
+    print(f"Searching for images with query: {query}")
+    try:
+        driver.get(search_url)
+        driver.implicitly_wait(5)
+        image_urls = set()
+        while not stop_search:
+            image_elements = driver.find_elements(By.CSS_SELECTOR, "img.tile--img__img")
+            new_image_urls = {img.get_attribute('src') for img in image_elements}
+            image_urls.update(new_image_urls)
+            print(f"Found {len(new_image_urls)} new image(s), total: {len(image_urls)}")
+            for idx, url in enumerate(new_image_urls):
+                if stop_search:
+                    return
+                try:
+                    response = requests.get(url)
+                    if response.status_code == 200:
+                        image_path = f"{download_folder}\\image_{idx+1+len(image_urls)-len(new_image_urls)}.jpg"
+                        with open(image_path, 'wb') as f:
+                            f.write(response.content)
+                        print(f"Downloaded image_{idx+1}.jpg")
+                        results = model(image_path)
+                        results.save()
+                        print(f"Processed image_{idx+1}.jpg with YOLO")
+                except Exception as e:
+                    print(f"Error downloading image: {e}")
+            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+            time.sleep(2)
+        driver.quit()
+        return list(image_urls)
+    except Exception as e:
+        print(f"An error occurred while fetching images: {e}")
+        driver.quit()
+        return []
+
+def start_download():
+    global stop_search
+    stop_search = False
+    query = entry.get()
+    if not query:
+        messagebox.showwarning("Input Error", "Please enter a reference name.")
+        return
+    nsfw_filter = nsfw_filter_var.get()
+    block_nsfw = block_nsfw_var.get()
+    download_folder = 'C:\\Users\\blure\\Downloads\\Image Downloader\\Images'
+    def threaded_search():
+        fetch_and_download_images(query, nsfw_filter, block_nsfw, download_folder)
+        messagebox.showinfo("Download Complete", f"Collected images based on '{query}' and downloaded to '{download_folder}'")
+    threading.Thread(target=threaded_search).start()
+
+def stop_download():
+    global stop_search
+    stop_search = True
+
+def toggle_dark_mode():
+    dark_mode = dark_mode_var.get()
+    style.theme_use('clam' if dark_mode else 'default')
+    bg, fg = ('#2e2e2e', '#ffffff') if dark_mode else ('#f0f0f0', '#000000')
+    root.configure(bg=bg)
+    for section in [download_section, settings_section]:
+        section.configure(bg=bg)
+    for widget in [label, dark_mode_button, download_button, stop_button, nsfw_filter_button, block_nsfw_button, settings_label]:
+        widget.configure(bg=bg, fg=fg)
+
+def show_downloader():
+    download_section.pack(fill="both", expand="yes")
+    settings_section.pack_forget()
+
+def show_settings():
+    settings_section.pack(fill="both", expand="yes")
+    download_section.pack_forget()
+
+root = tk.Tk()
+root.title("Image Downloader")
+root.geometry("600x450")
+root.resizable(False, False)
+style = ttk.Style()
+style.theme_use('default')
+
+main_frame = tk.Frame(root)
+main_frame.pack(pady=20, padx=20, fill="both", expand="yes")
+nav_frame = tk.Frame(root)
+nav_frame.pack(side="top", fill="x", padx=20)
+
+downloader_button = tk.Button(nav_frame, text="Downloader", command=show_downloader)
+downloader_button.pack(side="left")
+settings_button = tk.Button(nav_frame, text="Settings", command=show_settings)
+settings_button.pack(side="right")
+
+download_section = tk.LabelFrame(main_frame, text="Downloader")
+download_section.pack(fill="both", expand="yes")
+settings_section = tk.LabelFrame(main_frame, text="Settings")
+
+label = tk.Label(download_section, text="Enter the reference name to search for images:")
+label.pack(pady=10)
+entry = tk.Entry(download_section, width=50)
+entry.pack(pady=5)
+
+download_button = tk.Button(download_section, text="Download Images", command=start_download)
+download_button.pack(pady=10)
+stop_button = tk.Button(download_section, text="Stop Download", command=stop_download)
+stop_button.pack(pady=10)
+
+nsfw_filter_var = tk.BooleanVar()
+nsfw_filter_button = tk.Checkbutton(download_section, text="Enable NSFW Filter", variable=nsfw_filter_var)
+nsfw_filter_button.pack(pady=10)
+
+block_nsfw_var = tk.BooleanVar()
+block_nsfw_button = tk.Checkbutton(download_section, text="Block NSFW Content", variable=block_nsfw_var)
+block_nsfw_button.pack(pady=10)
+
+settings_label = tk.Label(settings_section, text="Settings:")
+settings_label.pack(pady=10)
+dark_mode_var = tk.BooleanVar()
+dark_mode_button = tk.Checkbutton(settings_section, text="Toggle Dark Mode", variable=dark_mode_var, command=toggle_dark_mode)
+dark_mode_button.pack(pady=10)
+
+root.mainloop()
